@@ -1,0 +1,11 @@
+---
+title: "p8106_hw3_qz2266"
+author: "Qing Zhou"
+date: "2023-03-23"
+output: pdf_document
+---
+
+```{r setup, include=FALSE}
+knitr::opts_chunk$set(echo = TRUE)
+```
+
