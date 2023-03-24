@@ -13,6 +13,7 @@ library(MASS)
 library(pROC)
 library(klaR)
 library(glmnet)
+library(vip)
 library(tidyverse)
 library(knitr)
 
@@ -36,6 +37,9 @@ auto = read.csv("data/auto.csv") %>%
     year = factor(year),
     origin = as.factor(origin)) 
 ```
+
+Note: Here I mutated `year` as a factor variable, since I don't assume there's a linear relationship between model year and gas millage. 
+
 
 ## Data spliting
 
@@ -72,7 +76,8 @@ logit_fit <- glm(mpg_cat ~ .,
 summary(logit_fit)
 ```
 
-Predictors in the logistic model that are statistically significant at the 5% level of significance are listed as below: 
+Predictors in the logistic model that are statistically significant at the 5% 
+level of significance are listed as below: 
 - `weight` (vehicle weight (lbs.))
 - `year79` (model year 79)
 - `year80` (model year 80)
@@ -80,7 +85,8 @@ Predictors in the logistic model that are statistically significant at the 5% le
 - `origin2` (European origin)
 - `origin3` (Japanese origin).
 
-2. Set the probability threshold to 0.5 to determine class labels and compute the confusion matrix using the test data
+2. Set the probability threshold to 0.5 to determine class labels and compute 
+the confusion matrix using the test data:
 
 ```{r}
 # forecast new observations in the testing set
@@ -101,10 +107,85 @@ logit_cm$byClass["Balanced Accuracy"]
 
 - The confusion matrix shows the number of correct and incorrect predictions per class. It helps in understanding the classes that are being confused by model as other class. The rows refer to predicted class, while the columns indicate the actual class. Therefore,  the number of true lows, true highs, false lows, and false highs are 50, 54, 4, and 8, respectively. Here true lows means the model has 50 correct predictions as having low gas mileage, and true high means the model has 54 correct predictions as having high gas mileage. False high indicate there are 8 count of number of low gas mileage that were misclassified as high gas mileage, and false low indicate there are 4 count of number of high gas mileage that were misclassified as low gas mileage.
 
--The overall prediction accuracy could be calculated as $\frac{50+54}{50+8+4+54} = 0.897$, with 95% CI (0.8263, 0.9454), and with a No Information Rate (NIR) of 0.5.
+- The overall prediction accuracy could be calculated as $\frac{50+54}{50+8+4+54} = 0.897$, with 95% CI (0.8263, 0.9454). Balance accuracy is also 0.897. The No Information Rate (NIR) is 0.5. The no information rate is 0.5,  which means if we made the same class prediction for all observations given no information, our model would be 50% accurate, which is not very ideal. P-value is < 2e-16. So the accuracy is significantly different from no information rate.
 
 - The kappa coefficient is 0.7931, which measures the agreement between classification and truth values. A kappa value of 1 represents perfect agreement, while a value of 0 represents no agreement. So here the kappa value indicates substantial agreement.
 
-- Sensitivity(the percentage of true positives among the positive observations)is 0.931 while specificity(the percentage of true negatives among the negative observations) is 0.8621. Positive Predictive Value (PPV) measures the ratio of true positive predictions considering all positive predictions. Negative Predictive Value (NPV) measures the ratio of true negative predictions considering all negative predictions.Here PPV is 0.871 while NPV is 0.9259.
+- Sensitivity(the percentage of true positives among the positive observations)is 0.931 while specificity(the percentage of true negatives among the negative observations) is 0.8621. Both are high. Positive Predictive Value (PPV) measures the ratio of true positive predictions considering all positive predictions. Negative Predictive Value (NPV) measures the ratio of true negative predictions considering all negative predictions.Here PPV is 0.871 while NPV is 0.9259.
+
+3. We can also fit a logistic regression using caret.Similarly, this model shows the same 6 predictors to be statistically significant, and they are `weight`, `year79`,  `year80`,  `year81`,
+`origin2`, `origin3`:
+
+```{r}
+# logistic model using caret
+set.seed(1)
+ctrl <- trainControl(method = "repeatedcv",
+                     summaryFunction = twoClassSummary,
+                     classProbs = TRUE)
+
+model.glm = train(x = auto[trainRows, 1:7],
+                  y = auto$mpg_cat[trainRows],
+                  method = "glm",
+                  metric = "ROC",
+                  trControl = ctrl)
+summary(model.glm)
+```
+
 
 ## (b). MARS model
+
+Train a multivariate adaptive regression spline (MARS) model using the training
+data:
+
+```{r warning=F, message=F}
+set.seed(1)
+
+ctrl <- trainControl(method = "repeatedcv",
+                     summaryFunction = twoClassSummary,
+                     classProbs = TRUE)
+
+
+mars_fit <- train(x,
+                  y,
+                  method = "earth",
+                  tuneGrid = expand.grid(degree = 1:4,
+                                         nprune = 2:20),
+                  metric = "ROC",
+                  trControl = ctrl)
+summary(mars_fit)
+plot(mars_fit)
+
+# extract the optimal tuning parameters
+kable(mars_fit$bestTune, "simple")
+coef(mars_fit$finalModel) 
+vip(mars_fit$finalModel)
+```
+
+- From the first plot,  we can see that when degree = 1 with 14 terms, the curve achieve its highest point. We got the same result from the extracted best tunes from the final MARS model.
+
+- From the variable importance measurement plot (VIP), we found only `displacement`, `cylinders`, `weight`, `year79-82` and `horsepower` contributes to the model. 
+
+- The final MARS model has RSS = 11.873, R-squared = 0.8279, which is pretty high.
+
+
+## (c). LDA
+
+1. Perform LDA using the training data:
+
+
+```{r}
+## LDA fit
+set.seed(1)
+lda.fit = lda(mpg_cat~., data = auto,
+               subset = trainRows)
+
+
+lda.fit$scaling
+head(predict(lda.fit)$x)
+mean(predict(lda.fit)$x) ## seen as 0, means data is centered
+```
+
+2. Plot the linear discriminants in LDA
+```{r fig.width=10, fig.asp=0.8}
+plot(lda.fit)
+```
