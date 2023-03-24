@@ -14,13 +14,14 @@ library(pROC)
 library(klaR)
 library(glmnet)
 library(tidyverse)
+library(knitr)
 
 
 knitr::opts_chunk$set(warning = FALSE)
 ```
 
 
-# Data import
+## Data import
 
 In this problem, we will develop a model to predict whether a given car gets 
 high or low gas mileage based on the dataset “auto.csv”. The dataset contains 
@@ -36,14 +37,14 @@ auto = read.csv("data/auto.csv") %>%
     origin = as.factor(origin)) 
 ```
 
-# Data spliting
+## Data spliting
 
-Split the dataset into two parts: training data (70%) and test data (30%).
+Split the dataset into two parts: training data (70%) and test data (30%):
 
 ```{r split}
 set.seed(1)
 
-# training data
+# partition
 trainRows <- createDataPartition(y = auto$mpg_cat, p = 0.7,list = FALSE)
 train_data = auto[trainRows, ]
 test_data = auto[-trainRows, ]
@@ -54,3 +55,56 @@ x_test = model.matrix(mpg_cat ~ ., test_data)[,-1]
 y_test = test_data$mpg_cat
 ```
 
+
+## (a) Logistic regression model
+
+1. Perform a logistic regression using the training data:
+
+```{r}
+set.seed(1)
+contrasts(auto$mpg_cat)
+
+# model fitting
+logit_fit <- glm(mpg_cat ~ .,
+               data = auto,
+               subset = trainRows,
+               family = binomial(link = "logit"))
+summary(logit_fit)
+```
+
+Predictors in the logistic model that are statistically significant at the 5% level of significance are listed as below: 
+- `weight` (vehicle weight (lbs.))
+- `year79` (model year 79)
+- `year80` (model year 80)
+- `year81` (model year 81) 
+- `origin2` (European origin)
+- `origin3` (Japanese origin).
+
+2. Set the probability threshold to 0.5 to determine class labels and compute the confusion matrix using the test data
+
+```{r}
+# forecast new observations in the testing set
+test.pred.prob <- predict(logit_fit, newdata = test_data,
+                          type = "response")
+test.pred <- rep("low", length(test.pred.prob))
+test.pred[test.pred.prob > 0.5] = "high"
+
+#confusion matrix
+logit_cm = confusionMatrix(data = factor(test.pred, levels = c("low", "high")),
+                                         reference = y_test,
+                                         positive = "high")
+logit_cm
+
+# extract overall accuracy of the model
+logit_cm$byClass["Balanced Accuracy"]
+```
+
+- The confusion matrix shows the number of correct and incorrect predictions per class. It helps in understanding the classes that are being confused by model as other class. The rows refer to predicted class, while the columns indicate the actual class. Therefore,  the number of true lows, true highs, false lows, and false highs are 50, 54, 4, and 8, respectively. Here true lows means the model has 50 correct predictions as having low gas mileage, and true high means the model has 54 correct predictions as having high gas mileage. False high indicate there are 8 count of number of low gas mileage that were misclassified as high gas mileage, and false low indicate there are 4 count of number of high gas mileage that were misclassified as low gas mileage.
+
+-The overall prediction accuracy could be calculated as $\frac{50+54}{50+8+4+54} = 0.897$, with 95% CI (0.8263, 0.9454), and with a No Information Rate (NIR) of 0.5.
+
+- The kappa coefficient is 0.7931, which measures the agreement between classification and truth values. A kappa value of 1 represents perfect agreement, while a value of 0 represents no agreement. So here the kappa value indicates substantial agreement.
+
+- Sensitivity(the percentage of true positives among the positive observations)is 0.931 while specificity(the percentage of true negatives among the negative observations) is 0.8621. Positive Predictive Value (PPV) measures the ratio of true positive predictions considering all positive predictions. Negative Predictive Value (NPV) measures the ratio of true negative predictions considering all negative predictions.Here PPV is 0.871 while NPV is 0.9259.
+
+## (b). MARS model
