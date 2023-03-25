@@ -85,6 +85,7 @@ level of significance are listed as below:
 - `origin2` (European origin)
 - `origin3` (Japanese origin).
 
+
 2. Set the probability threshold to 0.5 to determine class labels and compute 
 the confusion matrix using the test data:
 
@@ -113,8 +114,8 @@ logit_cm$byClass["Balanced Accuracy"]
 
 - Sensitivity(the percentage of true positives among the positive observations)is 0.931 while specificity(the percentage of true negatives among the negative observations) is 0.8621. Both are high. Positive Predictive Value (PPV) measures the ratio of true positive predictions considering all positive predictions. Negative Predictive Value (NPV) measures the ratio of true negative predictions considering all negative predictions.Here PPV is 0.871 while NPV is 0.9259.
 
-3. We can also fit a logistic regression using caret.Similarly, this model shows the same 6 predictors to be statistically significant, and they are `weight`, `year79`,  `year80`,  `year81`,
-`origin2`, `origin3`:
+
+3. We can also fit a logistic regression using caret.Similarly, this model shows the same 6 predictors to be statistically significant, and they are `weight`, `year79`,  `year80`,  `year81`, `origin2`, `origin3`:
 
 ```{r}
 # logistic model using caret
@@ -123,12 +124,12 @@ ctrl <- trainControl(method = "repeatedcv",
                      summaryFunction = twoClassSummary,
                      classProbs = TRUE)
 
-model.glm = train(x = auto[trainRows, 1:7],
+logit_caret = train(x = auto[trainRows, 1:7],
                   y = auto$mpg_cat[trainRows],
                   method = "glm",
                   metric = "ROC",
                   trControl = ctrl)
-summary(model.glm)
+summary(logit_caret)
 ```
 
 
@@ -140,20 +141,17 @@ data:
 ```{r warning=F, message=F}
 set.seed(1)
 
-ctrl <- trainControl(method = "repeatedcv",
-                     summaryFunction = twoClassSummary,
-                     classProbs = TRUE)
+mars_fit <- train(x = auto[trainRows,1:7],
+                    y = auto$mpg_cat[trainRows],
+                    method = "earth",
+                    tuneGrid = expand.grid(degree = 1:4,
+                                           nprune = 2:20),
+                    metric = "ROC",
+                    trControl = ctrl)
 
-
-mars_fit <- train(x,
-                  y,
-                  method = "earth",
-                  tuneGrid = expand.grid(degree = 1:4,
-                                         nprune = 2:20),
-                  metric = "ROC",
-                  trControl = ctrl)
 summary(mars_fit)
 plot(mars_fit)
+
 
 # extract the optimal tuning parameters
 kable(mars_fit$bestTune, "simple")
@@ -161,9 +159,9 @@ coef(mars_fit$finalModel)
 vip(mars_fit$finalModel)
 ```
 
-- From the first plot,  we can see that when degree = 1 with 14 terms, the curve achieve its highest point. We got the same result from the extracted best tunes from the final MARS model.
+- From the first plot,  we can see that when degree = 1 with 14 terms, the curve reaches its highest point. We got the same result from the extracted best tunes from the final MARS model.
 
-- From the variable importance measurement plot (VIP), we found only `displacement`, `cylinders`, `weight`, `year79-82` and `horsepower` contributes to the model. 
+- From the variable importance measurement plot (VIP), we found 8 variables of `displacement`, `cylinders`, `weight`, `year79-82` and `horsepower` contributes most to the model. Among them, `displacement`, `cylinders`, and `weight` are the most important. `year71`and `acceleration` has zero importance. 
 
 - The final MARS model has RSS = 11.873, R-squared = 0.8279, which is pretty high.
 
@@ -179,13 +177,122 @@ set.seed(1)
 lda.fit = lda(mpg_cat~., data = auto,
                subset = trainRows)
 
-
 lda.fit$scaling
 head(predict(lda.fit)$x)
 mean(predict(lda.fit)$x) ## seen as 0, means data is centered
 ```
 
 2. Plot the linear discriminants in LDA
+
 ```{r fig.width=10, fig.asp=0.8}
 plot(lda.fit)
 ```
+
+The linear discriminate is plotted above within two classes, and we have k = 2-1 = 1 linear discriminants.The plot shows there are a little overlap observed between two groups but not very severe. 
+
+
+3. Using caret to fit LDA model shows the same predictors and coefficients:
+
+```{r}
+set.seed(1)
+lda_caret = train(mpg_cat ~ .,
+                  data = train_data,
+                  method = "lda",
+                  metric = "ROC",
+                  trControl = ctrl)
+
+lda_caret$bestTune
+coef(lda_caret$finalModel)
+```
+
+## (d). Model selection
+
+Which model will you use to predict the response variable? Plot its ROC curve using
+the test data. Report the AUC and the misclassification error rate.
+
+1. Compare 3 models:
+
+```{r}
+res <- resamples(list(LOGIT = logit_caret,
+                      MARS = mars_fit,
+                      LDA = lda_caret))
+summary(res)
+
+bwplot(res, metric = "ROC")
+```
+
+- From the summary and the box-plot, we compared the mean and median and overall distribution of AUC of three models and concluded LDA has the largest AUC.
+
+- Note: AUC is referred to as "ROC" in R output.
+
+
+2. Now let’s look at the test set performance:
+
+```{r}
+set.seed(1)
+
+logit_pred_prob <- predict(logit_caret, newdata = auto[-trainRows,], type = "prob")[,2]
+mars_pred_prob <- predict(mars_fit, newdata = auto[-trainRows,], type = "prob")[,2]
+lda_pred_prob <- predict(lda_caret, newdata = auto[-trainRows,], type = "prob")[,2]
+
+roc.logit <- roc(auto$mpg_cat[-trainRows], logit_pred_prob)
+roc.mars <- roc(auto$mpg_cat[-trainRows], mars_pred_prob)
+roc.lda <- roc(auto$mpg_cat[-trainRows], lda_pred_prob)
+
+# AUC
+auc <- c(roc.logit$auc[1], roc.mars$auc[1], roc.lda$auc[1])
+auc
+
+# plot the ROC curve using the test data
+plot(roc.logit, legacy.axes = TRUE)
+plot(roc.mars, col = 2, add = TRUE)
+plot(roc.lda, col = 3, add = TRUE)
+modelNames <- c("logit", "mars", "lda")
+legend("bottomright", legend = paste0(modelNames, ": ", round(auc,3)),
+col = 1:3, lwd = 2)
+```
+
+- The value for area under the curve (AUC) suggests the model performance. From the results above we know, AUC of Logit, MARS and LDA model are 0.9619501, 0.9368312, and 0.9622473 respectively. Therefore, LDA with the largest AUC is the most favorable. 
+
+- In conclusion, LDA model has the best performance and we choose **LDA model** to predict the response variable.
+
+
+
+3. Misclassification error rate:
+
+```{r, message=F}
+
+# confusion matrix to get the overall accuracy of the models
+
+logit_pred = rep("low", length(logit_pred_prob))
+logit_pred[logit_pred_prob > 0.5] = "high"
+logit_cm = confusionMatrix(data = factor(logit_pred, levels = c("low", "high")),
+                                       reference = y_test,
+                                       positive = "high")
+
+mars_pred = rep("low", length(mars_pred_prob))
+mars_pred[mars_pred_prob > 0.5] = "high"
+mars_cm = confusionMatrix(data = factor(mars_pred, levels = c("low", "high")),
+                                        reference = y_test,
+                                        positive = "high")
+
+
+lda_pred = rep("low", length(lda_pred_prob))
+lda_pred[lda_pred_prob > 0.5] = "high"
+lda_cm = confusionMatrix(data = factor(lda_pred, levels = c("low", "high")),
+                                       reference = y_test,
+                                       positive = "high")
+
+
+misclas_table = matrix(c(modelNames,
+                         (1 - logit_cm$byClass[["Balanced Accuracy"]]), 
+                         (1 - mars_cm$byClass[["Balanced Accuracy"]]), 
+                         (1 - lda_cm$byClass[["Balanced Accuracy"]])))
+
+
+kable(misclas_table[,], "simple")
+
+```
+
+The misclassification error rate is a metric that tells us the percentage of observations that were incorrectly predicted by some classification model. The value for misclassification rate can range from 0 to 1 where: 0 represents a model that had zero incorrect predictions. It is defined as 1 - accuracy, or 1 - the overall fraction of correct predictions. The misclassification error rate of Logit, MARS and LDA model is 0.1034, 0.1207 and 0.1034 respectively. Thus, Logit and LDA is better than MARS.
+
